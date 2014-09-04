@@ -89,15 +89,13 @@ class Fastcore(object):
         for rxnid in sorted(model.reaction_set):
             yield rxnid, prob.get_value('v_'+rxnid)
 
-    def lp10(self, model, subset_k, subset_p, epsilon, weights={}):
+    def lp10(self, model, subset_k, subset_p, epsilon, scaling, weights={}):
         # This program forces reactions in subset K to attain flux > epsilon
         # while minimizing the sum of absolute flux values for reactions
         # in subset P (L1-regularization).
 
         if len(subset_k) == 0:
             return
-
-        scaling = 1e10
 
         # Create LP-10 problem of Fastcore
         prob = self._solver.create_problem()
@@ -107,7 +105,7 @@ class Fastcore(object):
             lower, upper = model.limits[rxnid]
             if rxnid in subset_k:
                 lower = max(lower, epsilon)
-            prob.define('v_'+rxnid, lower=lower*scaling, upper=upper*scaling)
+            prob.define('v_'+rxnid, lower=scaling*lower, upper=scaling*upper)
 
         # Define z variables
         prob.define(*('z_'+rxnid for rxnid in subset_p), lower=0)
@@ -232,7 +230,55 @@ class Fastcore(object):
         if len(k) == 0:
             return iter(())
 
-        return support(self.lp10(model, k, additional, epsilon, weights=weights), epsilon)
+        scaling = 1e5
+        lp10_fluxes = dict(self.lp10(model, k, additional, epsilon, scaling=scaling, weights=weights))
+        print 'LP10 (1)'
+        for reaction, flux in sorted(lp10_fluxes.iteritems()):
+            print '{}\t{}'.format(reaction, flux)
+
+        prob = self._solver.create_problem()
+        tol = prob.cplex.parameters.simplex.tolerances.feasibility
+        print 'Tolerance: {}'.format(tol)
+
+        # Define flux variables
+        for rxnid in model.reaction_set:
+            lower, upper = model.limits[rxnid]
+            if abs(lp10_fluxes[rxnid]) < tol:
+                lower, upper = 0, 0
+            prob.define('v_'+rxnid, lower=lower, upper=upper)
+            prob.define('z_'+rxnid, lower=0, upper=epsilon)
+
+            if lp10_fluxes[rxnid] > tol:
+                prob.add_linear_constraints(prob.var('v_'+rxnid) >= prob.var('z_'+rxnid))
+            elif lp10_fluxes[rxnid] < -tol:
+                prob.add_linear_constraints(-prob.var('v_'+rxnid) >= prob.var('z_'+rxnid))
+
+        prob.set_linear_objective(sum(prob.var('z_'+rxnid) for rxnid in model.reaction_set))
+
+        massbalance_lhs = { compound: 0 for compound in model.compound_set }
+        for spec, value in model.matrix.iteritems():
+            compound, rxnid = spec
+            massbalance_lhs[compound] += prob.var('v_'+rxnid) * value
+        prob.add_linear_constraints(*(lhs == 0 for compound, lhs in massbalance_lhs.iteritems()))
+
+        # Solve
+        prob.solve(lpsolver.CplexProblem.Maximize)
+        status = prob.cplex.solution.get_status()
+        if status != 1:
+            raise Exception('Non-optimal solution: {}'.format(prob.cplex.solution.get_status_string()))
+
+        print 'LPX'
+        lpx_fluxes = { reaction:prob.get_value('v_'+reaction) for reaction in model.reaction_set }
+        for reaction in sorted(model.reaction_set):
+            if abs(lp10_fluxes[reaction]) > tol:
+                print '{}\t{}'.format(reaction, lpx_fluxes[reaction])
+
+        low_flux_reactions = set(reaction for reaction in model.reaction_set if abs(lp10_fluxes[reaction]) > tol and abs(lpx_fluxes[reaction]) < epsilon - tol)
+        if len(low_flux_reactions) > 0:
+            fluxes = { reaction: lpx_fluxes[reaction] for reaction in low_flux_reactions }
+            raise Exception('Reactions unable to reach a flux of epsilon ({}): {}'.format(epsilon, fluxes))
+
+        return (reaction for reaction in model.reaction_set if abs(lp10_fluxes[reaction]) > tol and abs(lpx_fluxes[reaction]) >= epsilon - tol)
 
     def fastcore(self, model, core, epsilon, weights={}):
         '''Find a flux consistent subnetwork containing the core subset
