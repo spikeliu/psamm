@@ -17,13 +17,14 @@
 
 import logging
 
-from ..command import SolverCommandMixin, Command, CommandError
+from ..command import (SolverCommandMixin, TableOutputMixin, Command,
+                       CommandError)
 from .. import fluxanalysis
 
 logger = logging.getLogger(__name__)
 
 
-class FluxBalanceCommand(SolverCommandMixin, Command):
+class FluxBalanceCommand(SolverCommandMixin, TableOutputMixin, Command):
     """Run flux balance analysis on the model."""
 
     @classmethod
@@ -76,9 +77,10 @@ class FluxBalanceCommand(SolverCommandMixin, Command):
         optimum = None
         for reaction_id, flux in sorted(result):
             rx = self._mm.get_reaction(reaction_id)
-            print('{}\t{}\t{}'.format(
-                reaction_id, flux,
-                rx.translated_compounds(lambda x: compound_name.get(x, x))))
+            rx_trans = rx.translated_compounds(
+                lambda x: compound_name.get(x, x))
+            yield reaction_id, flux, rx_trans
+
             # Remember flux of requested reaction
             if reaction_id == reaction:
                 optimum = flux

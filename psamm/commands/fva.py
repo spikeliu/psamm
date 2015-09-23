@@ -15,11 +15,12 @@
 #
 # Copyright 2014-2015  Jon Lund Steffensen <jon_steffensen@uri.edu>
 
-from ..command import Command, SolverCommandMixin, CommandError
+from ..command import (Command, SolverCommandMixin, TableOutputMixin,
+                       CommandError)
 from .. import fluxanalysis
 
 
-class FluxVariabilityCommand(SolverCommandMixin, Command):
+class FluxVariabilityCommand(SolverCommandMixin, TableOutputMixin, Command):
     """Run flux variablity analysis on the model."""
 
     @classmethod
@@ -65,8 +66,9 @@ class FluxVariabilityCommand(SolverCommandMixin, Command):
         flux_bounds = fluxanalysis.flux_variability(
             self._mm, sorted(self._mm.reactions), {reaction: optimum},
             tfba=enable_tfba, solver=solver)
+
         for reaction_id, bounds in flux_bounds:
             rx = self._mm.get_reaction(reaction_id)
-            rxt = rx.translated_compounds(lambda x: compound_name.get(x, x))
-            print('{}\t{}\t{}\t{}'.format(
-                reaction_id, bounds[0], bounds[1], rxt))
+            rx_trans = rx.translated_compounds(
+                lambda x: compound_name.get(x, x))
+            yield reaction_id, bounds[0], bounds[1], rx_trans
