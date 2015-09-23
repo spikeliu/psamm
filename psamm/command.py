@@ -25,13 +25,16 @@ discovered.
 The :func:`.main` function is the entry point of command line interface.
 """
 
+import sys
 import os
 import argparse
 import logging
 import abc
+import functools
+import csv
 
 import pkg_resources
-from six import add_metaclass, iteritems
+from six import add_metaclass, iteritems, text_type
 
 from . import __version__ as package_version
 from .datasource.native import NativeModel
@@ -145,6 +148,32 @@ class SolverCommandMixin(object):
         solver_args = dict(kwargs)
         solver_args.update(self._solver_args)
         return generic.Solver(**solver_args)
+
+
+class TableOutputMixin(object):
+    """Mixin for commands that output tables.
+
+    This wraps the ``run`` method such that any tuples yielded from it are
+    printed in TSV format.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super(TableOutputMixin, self).__init__(*args, **kwargs)
+
+        # Wrap the run() method to output yielded entries
+        def wrap_run(run_func):
+            def wrapped():
+                self._write_tsv_table(run_func())
+            return wrapped
+
+        run_with_table_output = wrap_run(self.run)
+        functools.update_wrapper(run_with_table_output, self.run)
+        self.run = run_with_table_output
+
+    def _write_tsv_table(self, entries):
+        writer = csv.writer(sys.stdout, delimiter='\t')
+        for entry in entries:
+            writer.writerow([text_type(s).encode('utf-8') for s in entry])
 
 
 def main(command_class=None, args=None):

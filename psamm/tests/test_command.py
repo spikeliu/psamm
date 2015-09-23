@@ -23,7 +23,7 @@ import unittest
 
 from six import StringIO
 
-from psamm.command import main, Command, SolverCommandMixin
+from psamm.command import main, Command, SolverCommandMixin, TableOutputMixin
 from psamm.lpsolver.generic import RequirementsError
 
 
@@ -61,6 +61,16 @@ class MockSolverCommand(SolverCommandMixin, Command):
         solver = self._get_solver()
 
 
+class MockTableOutputCommand(TableOutputMixin, Command):
+    """Test table output command.
+
+    This is a command for testing table output commands.
+    """
+    def run(self):
+        for test in [('abc', 1), ('def', 2), (u'\xe6\xf8\xe5', 3)]:
+            yield test
+
+
 class TestCommandMain(unittest.TestCase):
     def setUp(self):
         self._model_dir = tempfile.mkdtemp()
@@ -91,3 +101,14 @@ class TestCommandMain(unittest.TestCase):
             main(MockSolverCommand, args=[
                 '--model', self._model_dir,
                 '--solver', 'name=not-an-actual-solver'])
+
+    def test_table_output_command_main(self):
+        _stdout = sys.stdout
+        try:
+            sys.stdout = StringIO()
+            main(MockTableOutputCommand, args=[
+                '--model', self._model_dir, '--output-format=tsv'])
+            self.assertEqual(sys.stdout.getvalue(), '\r\n'.join(
+                ['abc\t1', 'def\t2', u'\xe6\xf8\xe5\t3'.encode('utf-8'), '']))
+        finally:
+            sys.stdout = _stdout
