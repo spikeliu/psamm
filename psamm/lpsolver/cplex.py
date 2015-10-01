@@ -221,6 +221,20 @@ class Problem(BaseProblem):
                 self._cp.solution.status.abort_user):
             raise KeyboardInterrupt()
 
+        # If problem is optimal with unscaled infeasibilities we try to
+        # solve again with scaling disabled.
+        if (self._cp.solution.get_status() ==
+                self._cp.solution.status.optimal_infeasible):
+            prev_scale = self._cp.parameters.read.scale.get()
+            if prev_scale != -1:
+                logger.warning(
+                    'Cplex solution infeasible, trying without scaling...')
+                try:
+                    self._cp.parameters.read.scale.set(-1)
+                    self._cp.solve()
+                finally:
+                    self._cp.parameters.read.scale.set(prev_scale)
+
         self._result = Result(self)
         return self._result
 
