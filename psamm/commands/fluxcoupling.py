@@ -17,7 +17,8 @@
 
 import logging
 
-from ..command import Command, SolverCommandMixin, CommandError
+from ..command import (Command, SolverCommandMixin, CommandError,
+                       FilePrefixAppendAction)
 from .. import fluxanalysis, fluxcoupling
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,16 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
     partially coupled (the ratio is bounded and non-zero); or directionally
     coupled (the ratio is non-zero).
     """
+
+    @classmethod
+    def init_parser(cls, parser):
+        parser.add_argument(
+            '--reaction', default=None, action=FilePrefixAppendAction,
+            type=str, help='Only include the given reactions')
+        parser.add_argument(
+            '--mode', default='couplings', choices=['couplings', 'groups'],
+            help='Find flux couplings or coupled groups')
+        super(FluxCouplingCommand, cls).init_parser(parser)
 
     def run(self):
         solver = self._get_solver()
@@ -51,7 +62,40 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
         self._coupled = {}
         self._groups = []
 
-        reactions = sorted(self._mm.reactions)
+        if self._args.reaction is None:
+            reactions = sorted(self._mm.reactions)
+        else:
+            reactions = self._args.reaction
+
+        if self._args.mode == 'couplings':
+            self._find_couplings(reactions)
+        elif self._args.mode == 'groups':
+            self._find_groups(reactions)
+        else:
+            raise CommandError('Invalid mode: {}'.format(self._args.mode))
+
+        logger.info('Coupled groups:')
+        for i, group in enumerate(g for g in self._groups if g is not None):
+            logger.info('Group {}: {}'.format(i, ', '.join(sorted(group))))
+
+    def _find_couplings(self, reactions):
+        for reaction1 in reactions:
+            for reaction2 in reactions:
+                #if reaction1 == reaction2:
+                #    continue
+                #if (reaction2 in self._coupled and
+                #        (self._coupled[reaction2] ==
+                #         self._coupled.get(reaction1))):
+                #    continue
+
+                lower, upper, text = (
+                    self._check_reactions(reaction1, reaction2))
+                #if text is not None:
+                if True:
+                    print('{}\t{}\t{}\t{}\t{}'.format(
+                        reaction1, reaction2, lower, upper, text))
+
+    def _find_groups(self, reactions):
         for i, reaction1 in enumerate(reactions):
             if reaction1 in self._coupled:
                 continue
@@ -64,10 +108,9 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
 
                 self._check_reactions(reaction1, reaction2)
 
-        logger.info('Coupled groups:')
-        for i, group in enumerate(self._groups):
-            if group is not None:
-                logger.info('{}: {}'.format(i, ', '.join(sorted(group))))
+        for reaction in reactions:
+            if reaction in self._coupled:
+                print('{}\t{}'.format(reaction, self._coupled[reaction]))
 
     def _check_reactions(self, reaction1, reaction2):
         logger.debug('Solving for {}, {}'.format(reaction1, reaction2))
@@ -81,7 +124,7 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
             text = 'Directional, v1 / v2 in [{}, {}]'.format(lower, upper)
             if (coupling == fluxcoupling.CouplingClass.DirectionalReverse and
                     not self._mm.is_reversible(reaction1) and lower == 0.0):
-                return
+                text = None
         elif coupling == fluxcoupling.CouplingClass.Full:
             text = 'Full: v1 / v2 = {}'.format(lower)
             self._couple_reactions(reaction1, reaction2)
@@ -89,10 +132,9 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
             text = 'Partial: v1 / v2 in [{}; {}]'.format(lower, upper)
             self._couple_reactions(reaction1, reaction2)
         else:
-            return
+            text = None
 
-        print('{}\t{}\t{}\t{}\t{}'.format(
-            reaction1, reaction2, lower, upper, text))
+        return lower, upper, text
 
     def _couple_reactions(self, reaction1, reaction2):
         logger.debug('Couple {} and {}'.format(reaction1, reaction2))
