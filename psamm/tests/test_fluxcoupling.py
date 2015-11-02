@@ -81,7 +81,10 @@ class TestFluxCouplingBurgardModel(unittest.TestCase):
                     self.assertIn(coupling, ((0.0, 0.0), (None, None)))
                 elif r1 in coupled_set and r2 in coupled_set:
                     lower, upper = couplings[r1, r2]
+                    lower_r, upper_r = couplings[r2, r1]
                     self.assertAlmostEqual(lower, upper)
+                    self.assertAlmostEqual(lower_r, lower)
+                    self.assertAlmostEqual(upper_r, upper)
                 else:
                     # At least one of the values must be 0 or None if the
                     # reactions are not in the coupled set.
