@@ -20,6 +20,7 @@
 Described in [Burgard04]_.
 """
 
+import math
 import logging
 
 from six import iteritems
@@ -65,7 +66,7 @@ class FluxCouplingProblem(object):
         self._prob = solver.create_problem()
 
         # Define t variable
-        self._prob.define('t')
+        self._prob.define('t', lower=0)
         t = self._prob.var('t')
 
         # Define flux variables
@@ -89,16 +90,22 @@ class FluxCouplingProblem(object):
 
         self._reaction_constr = None
 
-    def solve(self, reaction_1, reaction_2):
-        """Return the flux coupling between two reactions
+    def solve(self, reaction_1, reaction_2, positive):
+        """Return the flux coupling between two reactions.
 
         The flux coupling is returned as a tuple indicating the minimum and
         maximum value of the v1/v2 reaction flux ratio. A value of None as
-        either the minimum or maximum indicates that the interval is unbounded
-        in that direction.
+        either the minimum or maximum indicates that optimization is
+        infeasible in that direction because the v2 might be blocked. A value
+        of +/- infinity (float) can be returned for either value.
+
+        The v2 is constrained to either positive values or negative values
+        depending on the ``positive`` parameter.
         """
         # Update objective for reaction_1
         self._prob.set_linear_objective(self._prob.var(('vbow', reaction_1)))
+
+        sign = 1 if positive else -1
 
         # Update constraint for reaction_2
         if self._reaction_constr is not None:
@@ -106,15 +113,26 @@ class FluxCouplingProblem(object):
 
         reaction_2_vbow = self._prob.var(('vbow', reaction_2))
         self._reaction_constr, = self._prob.add_linear_constraints(
-            reaction_2_vbow == 1)
+            reaction_2_vbow == sign)
 
         results = []
-        for sense in (lp.ObjectiveSense.Minimize, lp.ObjectiveSense.Maximize):
+        for i, sense in enumerate(
+                (lp.ObjectiveSense.Minimize, lp.ObjectiveSense.Maximize)):
             result = self._prob.solve(sense)
-            if not result:
-                results.append(None)
-            else:
-                results.append(result.get_value(('vbow', reaction_1)))
+            value = None
+            if result or result.unbounded:
+                if result:
+                    value = sign * result.get_value(('vbow', reaction_1))
+                else:
+                    if sense == lp.ObjectiveSense.Minimize:
+                        value = sign * -float('inf')
+                    else:
+                        value = sign * float('inf')
+
+            results.append(value)
+
+        if not positive:
+            return tuple(reversed(results))
 
         return tuple(results)
 
@@ -130,9 +148,9 @@ def classify_coupling(coupling):
     """
     lower, upper = coupling
 
-    if lower is None and upper is None:
+    if math.isinf(lower) and math.isinf(upper):
         return CouplingClass.Uncoupled
-    elif lower is None or upper is None:
+    elif math.isinf(lower) or math.isinf(upper):
         return CouplingClass.DirectionalReverse
     elif lower == 0.0 and upper == 0.0:
         return CouplingClass.Inconsistent
@@ -142,3 +160,20 @@ def classify_coupling(coupling):
         return CouplingClass.Full
     else:
         return CouplingClass.Partial
+
+
+def reversed_coupling(coupling):
+    """Determine the reverse coupling values for a reaction pair.
+
+    Args:
+        coupling: Tuple of minimum and maximum flux ratio
+    """
+    def inverse(v):
+        if v is None:
+            return 0.0
+        elif v == 0.0:
+            return float('inf')
+        return 1.0 / v
+
+    lower, upper = coupling
+    return inverse(upper), inverse(lower)

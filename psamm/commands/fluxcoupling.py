@@ -20,6 +20,7 @@ import logging
 from ..command import (Command, SolverCommandMixin, CommandError,
                        FilePrefixAppendAction)
 from .. import fluxanalysis, fluxcoupling
+from ..util import MaybeRelative
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,9 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
             '--reaction', default=None, action=FilePrefixAppendAction,
             type=str, help='Only include the given reactions')
         parser.add_argument(
+            '--threshold', default=MaybeRelative('100%'), type=MaybeRelative,
+            help='Flux threshold on objective reaction')
+        parser.add_argument(
             '--mode', default='couplings', choices=['couplings', 'groups'],
             help='Find flux couplings or coupled groups')
         super(FluxCouplingCommand, cls).init_parser(parser)
@@ -52,20 +56,34 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
         if max_reaction is None:
             raise CommandError('The biomass reaction was not specified')
 
-        fba_fluxes = dict(fluxanalysis.flux_balance(
-            self._mm, max_reaction, tfba=False, solver=solver))
-        optimum = fba_fluxes[max_reaction]
-
-        self._fcp = fluxcoupling.FluxCouplingProblem(
-            self._mm, {max_reaction: 0.999 * optimum}, solver)
-
-        self._coupled = {}
-        self._groups = []
-
         if self._args.reaction is None:
             reactions = sorted(self._mm.reactions)
         else:
             reactions = self._args.reaction
+
+        threshold = self._args.threshold
+        if threshold.relative:
+            fba_fluxes = dict(fluxanalysis.flux_balance(
+                self._mm, max_reaction, tfba=False, solver=solver))
+            threshold.reference = fba_fluxes[max_reaction]
+
+        logger.info('Setting objective threshold to {}'.format(threshold))
+
+        logger.info('Identifying blocked reactions...')
+
+        self._blocked = {}
+        for reaction_id, (minimum, maximum) in fluxanalysis.flux_variability(
+                self._mm, reactions, {max_reaction: float(threshold)},
+                tfba=False, solver=solver):
+            blocked_neg = minimum >= 0.0
+            blocked_pos = maximum <= 0.0
+            self._blocked[reaction_id] = blocked_neg, blocked_pos
+
+        self._fcp = fluxcoupling.FluxCouplingProblem(
+            self._mm, {max_reaction: float(threshold)}, solver)
+
+        self._coupled = {}
+        self._groups = []
 
         if self._args.mode == 'couplings':
             self._find_couplings(reactions)
@@ -75,25 +93,31 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
             raise CommandError('Invalid mode: {}'.format(self._args.mode))
 
         logger.info('Coupled groups:')
-        for i, group in enumerate(g for g in self._groups if g is not None):
+        for i, group in enumerate(
+                g for g in self._groups if g is not None and len(g) > 1):
             logger.info('Group {}: {}'.format(i, ', '.join(sorted(group))))
 
     def _find_couplings(self, reactions):
-        for reaction1 in reactions:
-            for reaction2 in reactions:
-                #if reaction1 == reaction2:
-                #    continue
-                #if (reaction2 in self._coupled and
-                #        (self._coupled[reaction2] ==
-                #         self._coupled.get(reaction1))):
-                #    continue
+        logger.info('Identifying coupled reactions...')
 
-                lower, upper, text = (
-                    self._check_reactions(reaction1, reaction2))
-                #if text is not None:
-                if True:
-                    print('{}\t{}\t{}\t{}\t{}'.format(
-                        reaction1, reaction2, lower, upper, text))
+        for reaction1 in reactions:
+            # Skip reactions that are completely blocked
+            if self._blocked[reaction1] == (True, True):
+                logger.info('Skipping reaction {} because it is'
+                            ' completely blocked'.format(reaction1))
+                continue
+
+            for reaction2 in reactions:
+                for positive in (True, False):
+                    blocked = self._blocked[reaction2][positive]
+                    if blocked:
+                        continue
+
+                    lower, upper, text = self._check_reactions(
+                        reaction1, reaction2, positive)
+                    print('{}\t{}\t{}\t{}\t{}\t{}'.format(
+                        reaction1, reaction2, 'pos' if positive else 'neg',
+                        lower, upper, text))
 
     def _find_groups(self, reactions):
         for i, reaction1 in enumerate(reactions):
@@ -112,9 +136,11 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
             if reaction in self._coupled:
                 print('{}\t{}'.format(reaction, self._coupled[reaction]))
 
-    def _check_reactions(self, reaction1, reaction2):
-        logger.debug('Solving for {}, {}'.format(reaction1, reaction2))
-        lower, upper = self._fcp.solve(reaction1, reaction2)
+    def _check_reactions(self, reaction1, reaction2, positive):
+        logger.debug('Solving for {}, {} {}'.format(
+            reaction1, 'positive' if positive else 'negative', reaction2))
+
+        lower, upper = self._fcp.solve(reaction1, reaction2, positive)
 
         logger.debug('Result: {}, {}'.format(lower, upper))
 
