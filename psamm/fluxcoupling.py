@@ -120,14 +120,13 @@ class FluxCouplingProblem(object):
                 (lp.ObjectiveSense.Minimize, lp.ObjectiveSense.Maximize)):
             result = self._prob.solve(sense)
             value = None
-            if result or result.unbounded:
-                if result:
-                    value = sign * result.get_value(('vbow', reaction_1))
+            if result:
+                value = sign * result.get_value(('vbow', reaction_1))
+            elif result.unbounded:
+                if sense == lp.ObjectiveSense.Minimize:
+                    value = sign * -float('inf')
                 else:
-                    if sense == lp.ObjectiveSense.Minimize:
-                        value = sign * -float('inf')
-                    else:
-                        value = sign * float('inf')
+                    value = sign * float('inf')
 
             results.append(value)
 
