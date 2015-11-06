@@ -47,6 +47,9 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
         parser.add_argument(
             '--mode', default='couplings', choices=['couplings', 'groups'],
             help='Find flux couplings or coupled groups')
+        parser.add_argument(
+            '--epsilon', type=float, help='Threshold for zero-flux reactions',
+            default=1e-5)
         super(FluxCouplingCommand, cls).init_parser(parser)
 
     def run(self):
@@ -75,8 +78,8 @@ class FluxCouplingCommand(SolverCommandMixin, Command):
         for reaction_id, (minimum, maximum) in fluxanalysis.flux_variability(
                 self._mm, reactions, {max_reaction: float(threshold)},
                 tfba=False, solver=solver):
-            blocked_neg = minimum >= 0.0
-            blocked_pos = maximum <= 0.0
+            blocked_neg = minimum >= -self._args.epsilon
+            blocked_pos = maximum <= self._args.epsilon
             self._blocked[reaction_id] = blocked_neg, blocked_pos
 
         self._fcp = fluxcoupling.FluxCouplingProblem(
