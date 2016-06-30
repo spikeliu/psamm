@@ -1,3 +1,21 @@
+v0.22 (2016-06-30)
+------------------
+
+- Add `fastgapfill` module which allows API access to run fastgapfill
+  algorithm.
+- Add `randomsparse` module which allows API access to generate a random
+  minimum model which satisfies the flux threshold of the objective reaction.
+- When parsing reaction and compound entities from the YAML files, add
+  abilities to check if the ID strings are legitimate to be read in.
+- Improve how PSAMM handle different errors when called from command line, it
+  would prompt proper error messages for different error types.
+- If a model doesn't have a default setup for default flux limit,
+  `NativeModel.get_default_flux_limit()` would return 1000 instead of `None`.
+- Fix a bug where calling get_num_binary() on the Cplex instance can cause a
+  segment fault in some rare cases.
+- Fix various unicode handling problems in YAML files and some typos in the
+  docstrings.
+
 v0.21 (2016-06-09)
 ------------------
 
